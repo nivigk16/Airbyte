@@ -1,0 +1,196 @@
+-- PROCEDURE: Optival.usp_avmbenchmark(integer)
+
+-- DROP PROCEDURE IF EXISTS "Optival".usp_avmbenchmark(integer);
+
+CREATE OR REPLACE PROCEDURE "Optival".usp_avmbenchmark(
+	IN flagid integer DEFAULT 0)
+LANGUAGE 'plpgsql'
+AS $BODY$
+DECLARE
+    "WeekID" INT;
+    inserted_row_count INT;
+    deleted_row_count INT; 
+BEGIN
+    -- Handle flagid
+    IF FlagID = 1 THEN
+        -- Capture the week ID and delete the records for the last week
+        SELECT COALESCE(MAX("Week"), 0) INTO "WeekID"
+        FROM "Optival"."AVMBenchmark";
+        
+        -- Perform the delete operation
+        DELETE FROM "Optival"."AVMBenchmark"
+        WHERE "Week" = "WeekID";
+
+        -- Get the number of deleted rows
+        GET DIAGNOSTICS deleted_row_count = ROW_COUNT; 
+
+    ELSE
+        -- Insert logic for the current week
+        SELECT COALESCE(MAX("Week"), 0) + 1 INTO "WeekID"
+        FROM "Optival"."AVMBenchmark";
+    END IF;
+		INSERT INTO "Optival"."LastExecutionStatus" ("WeekID", "UpdatedAt")
+        VALUES ("WeekID", CURRENT_TIMESTAMP);
+    WITH LatestOrders AS(
+        SELECT ROW_NUMBER() OVER (
+                    PARTITION BY REPLACE(LOWER(TRIM("Address")), ' ', '') 
+                    ORDER BY "OrderedAt" DESC NULLS LAST
+                ) AS "LatestOrderID",
+                "PdRef#",
+                "JobID",
+                "OrderedAt",
+                "Unit",
+                "City",
+                "State",
+                "ZIP",
+                RIGHT("FIPS",3) AS "FIPS",
+                "County",
+                "FormName",
+                "ContractPrice",
+                "ContractDate",
+                "AppraisedValue",
+                "AppraisalDate",
+                "Account",
+                "ExecutionID",
+                "FileProcessingID",
+                "DataSourceConfigID",
+                "Address"
+        FROM stage."ConsolidatedAVMBenchmark"
+    ),
+    UpdatedLatestOrders AS (
+        SELECT lo.*,
+               CONCAT("State","FIPS") AS "AlphaFIPS"
+        FROM LatestOrders AS lo
+        WHERE "LatestOrderID" = 1
+    ),
+    ConcatenateStateANDFips AS(
+        SELECT Ulo.*,
+               ROW_NUMBER() OVER () AS "RowID",
+               TRIM(REGEXP_REPLACE("Address", '[^a-zA-Z0-9 ]', '', 'g')) AS "LatestAddress"
+        FROM UpdatedLatestOrders AS Ulo
+    ),
+    SplitWords AS (
+        SELECT 
+            csf."RowID",
+            csf."LatestAddress" AS "Address",
+            unnest(string_to_array(csf."LatestAddress", ' ')) AS word,
+            generate_subscripts(string_to_array(csf."LatestAddress", ' '), 1) AS position
+        FROM ConcatenateStateANDFips csf
+    ),
+    MatchedWords AS (
+        SELECT 
+            sw."RowID",
+            sw."Address",
+            sw.word,
+            sw.position,
+            COALESCE(t2.abbreviation, sw.word) AS final_word,
+            ROW_NUMBER() OVER (PARTITION BY sw."RowID", sw.position ORDER BY t2.abbreviation NULLS LAST) AS rn
+        FROM SplitWords sw
+        LEFT JOIN "Optival"."AbbreviationConfig" t2 
+            ON LOWER(sw.word) = LOWER(t2.fullname)
+    ),
+    FilteredCleanedAddress AS (
+        SELECT 
+            "RowID",
+            STRING_AGG(final_word, ' ' ORDER BY position) AS "CleanedAddress"
+        FROM MatchedWords
+        WHERE rn = 1
+        GROUP BY "RowID"
+    ),
+    ReplaceAbbreviation AS (
+        SELECT ROW_NUMBER() OVER (
+                PARTITION BY REPLACE(LOWER(TRIM(fca."CleanedAddress")), ' ', '') 
+                ORDER BY ulo."OrderedAt" DESC NULLS LAST
+            ) AS "RowNumber",
+            ulo."PdRef#",
+            ulo."JobID",
+            ulo."OrderedAt",
+            ulo."Unit",
+            ulo."City",
+            ulo."State",
+            ulo."ZIP",
+            ulo."FIPS",
+            ulo."AlphaFIPS",
+            ulo."County",
+            ulo."FormName",
+            ulo."ContractPrice",
+            ulo."ContractDate",
+            ulo."AppraisedValue",
+            ulo."AppraisalDate",
+            ulo."Account",
+            ulo."ExecutionID",
+            ulo."FileProcessingID",
+            ulo."DataSourceConfigID",
+            fca."CleanedAddress" AS "Address"
+        FROM ConcatenateStateANDFips ulo
+        JOIN FilteredCleanedAddress fca ON ulo."RowID" = fca."RowID"
+    ),
+    FilterPriceValue AS (
+        SELECT rb.*,
+               CASE 
+                    WHEN LENGTH(rb."ZIP") > 5 THEN SUBSTRING(rb."ZIP", 1, 5)  
+                    ELSE rb."ZIP"  
+                END AS "TransformedZIP",
+                CASE
+                    WHEN  rb."ContractPrice" BETWEEN 20000 AND 10000000 THEN 'ContractPrice'
+                    WHEN  rb."AppraisedValue" BETWEEN 20000 AND 10000000 THEN 'AppraisedValue'
+                    ELSE  'NotMatched'
+                END AS "BenchMarkType"
+        FROM ReplaceAbbreviation AS rb
+        WHERE "RowNumber" = 1 AND "ContractPrice" IS NOT NULL AND "ContractPrice" != 0
+            AND "AppraisedValue" IS NOT NULL AND "AppraisedValue" != 0
+    )
+    -- Insert into AVMBenchmark table
+    INSERT INTO "Optival"."AVMBenchmark" (
+        "PdRef#","JobID", "OrderedAt", "Unit", "City", "State", "ZIP", "FIPS","AlphaFIPS",
+        "County", "FormName", "ContractPrice", "ContractDate", 
+        "AppraisedValue","AppraisalDate", "Account", "ExecutionID", 
+        "FileProcessingID", "DataSourceConfigID", "Address", "BenchMarkType", "Week"
+    )
+    SELECT "PdRef#",
+           "JobID",
+           "OrderedAt",
+           "Unit",
+           "City",
+           "State",
+           "TransformedZIP" AS "ZIP",
+           "FIPS",
+           "AlphaFIPS",
+           "County",
+           "FormName",
+           "ContractPrice",
+           "ContractDate",
+           "AppraisedValue",
+           "AppraisalDate",
+           "Account",
+           "ExecutionID",
+           "FileProcessingID",
+           "DataSourceConfigID",
+           "Address",
+           "BenchMarkType",
+           "WeekID"
+    FROM FilterPriceValue
+	 WHERE TRIM("Address") ~ '^[0-9]' AND "BenchMarkType" != 'NotMatched';
+
+	GET DIAGNOSTICS  inserted_row_count = ROW_COUNT;
+    
+    -- Insert into Audit TableProcessing table 
+    INSERT INTO "Audit"."Tableprocessing"(
+          "TableName", "ExtractRowCnt", "ExecutionLogID", "InsertRowCnt", "DeleteRowCnt"
+    )
+    SELECT 	'Optival.AVMBenchmark',
+            "ExtractedRowsCnt",
+            "ExecutionID",
+            COALESCE(inserted_row_count,0) AS "InsertRowCnt",
+            COALESCE(deleted_row_count,0) AS "DeleteRowCnt"
+    FROM (
+        SELECT count(*) AS "ExtractedRowsCnt",
+               "ExecutionID"
+        FROM stage."ConsolidatedAVMBenchmark"
+        GROUP BY "ExecutionID"
+    ) insert_data;
+
+END;
+$BODY$;
+ALTER PROCEDURE "Optival".usp_avmbenchmark(integer)
+    OWNER TO postgres;
