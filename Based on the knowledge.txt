@@ -1,0 +1,20 @@
+Based on the knowledge sources provided, there are several situations where connections in Airbyte may fail:1. Connection Timeout Issues:
+  - When a service doesn't get enough time to load, such as in the Clickhouse destination where the connection times out after 60 seconds
+  - Example error: "Connection is not available, request timed out after 60002ms" Github Issue #290052. Database Connection Problems:
+  - When the database server terminates abnormallection refused")
+  - DNS resolution failures (e.g., "Temporary failure in name resolution") Forum Posty before or while processing a request
+  - When the bootloader fails to connect to PostgreSQL database with errors like "Connection timed out" Github Issue #428763. Network Issues:
+  - Connection refused errors (e.g., "PortUnreachableException: recvAddress(..) failed: Conn
+  - Failed to establish new connections4. API Rate Limiting:
+  - When a source API enforces rate limits and Airbyte attempts to extract too much data too quickly
+  - Airbyte will display an informational mesnections4. API Rate Limiting:
+  - When a source API enforces rate limitssage and may show a countdown to when it will retry Connection Troubleshooting5. Configuration Errors:
+  - Incorrect connection parameters (shown in red in the UI)
+  - Using localhost/127.0.0.1 in some scenarios where it doesn't work properly Github Issue #295586. System Errors:
+  - Transient errors or warnings from the source (shown in yellow in the UI)
+  - These often resolve themselves without action Connection Troubleshooting7. Resource Limitations:
+  - When source or destination databases lack sufficient resources
+  - When connections are closed due to resource constraints Forum PostIf a sync starts to fail, Airbyte automatically disables it after multiple consecutive failures or consecutive days of failure.
+  
+  
+
