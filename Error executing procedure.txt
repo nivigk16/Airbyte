@@ -1,0 +1,28 @@
+"Error executing procedure usp_NewCashFlow: column ""Date123"" of relation ""NewCashFlow"" does not exist
+LINE 2:          ""Date123"", 
+                 ^
+QUERY:  INSERT INTO ""BkTec"".""NewCashFlow"" (
+         ""Date123"",	
+         ""TransactionID"",	
+         ""AccountID"",	
+         ""CashFlowCategory"",	
+         ""ActivityDescription"",	
+         ""InflowAmount"",	
+         ""OutflowAmount"",	
+         ""NetCashFlow""
+    )
+    SELECT 
+         T.""Date"",
+         T.""TransactionID"",
+         T.""AccountID"",
+         T.""CashFlowCategory"",
+         T.""ActivityDescription"",
+         T.""InflowAmount"",
+         T.""OutflowAmount"",
+         T.""NetCashFlow""
+    FROM Temp_NewCashFlow T
+    LEFT JOIN ""BkTec"".""NewCashFlow"" BCF 
+      ON BCF.""TransactionID"" = T.""TransactionID""
+    WHERE BCF.""TransactionID"" IS NULL
+CONTEXT:  PL/pgSQL function ""BkTec"".""usp_NewCashFlow""() line 66 at SQL statement
+"
